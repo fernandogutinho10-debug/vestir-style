@@ -1,0 +1,72 @@
+rules_version = '2';
+// Regras da FESTA + VESTIR STYLE (mesmo projeto Firebase)
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == "fernando.gutinho10@gmail.com";
+    }
+    function signedIn() { return request.auth != null; }
+
+    // Informações da festa e fotos: todos leem, só o organizador altera
+    match /event/{id}  { allow read: if true; allow write: if isAdmin(); }
+    match /photos/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /drinks/{id} { allow read: if true; allow write: if isAdmin(); }
+
+    // Presença: cada pessoa só mexe na própria; o organizador mexe em todas
+    match /rsvps/{uid} {
+      allow read: if true;
+      allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create, update: if isAdmin() || (signedIn() && request.auth.uid == uid
+        && request.resource.data.name is string && request.resource.data.name.size() <= 50
+        && request.resource.data.plan in [25, 50]);
+    }
+
+    // Confirmação de pagamento: só o organizador
+    match /confirmations/{uid} { allow read: if true; allow write: if isAdmin(); }
+
+    // Itens: o organizador cria/remove; convidados só pegam item livre ou soltam o próprio
+    match /items/{id} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimedBy', 'claimedName', 'claimedAt'])
+        && ((resource.data.claimedBy == null && request.resource.data.claimedBy == request.auth.uid)
+          || (resource.data.claimedBy == request.auth.uid && request.resource.data.claimedBy == null)));
+    }
+
+    // Votos: cada pessoa só o próprio, no máximo 3 escolhas
+    match /votes/{uid} {
+      allow read: if true;
+      allow write: if signedIn() && request.auth.uid == uid
+        && (request.method == 'delete' || (request.resource.data.picks is list && request.resource.data.picks.size() <= 3));
+    }
+  
+    // ================= VESTIR STYLE =================
+    match /vs_config/{id} { allow read: if true; allow write: if isAdmin(); }
+
+    match /orders/{oid} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status == 'aberto'
+        && request.resource.data.title is string && request.resource.data.title.size() <= 60
+        && request.resource.data.model in ['tshirt', 'hoodie']
+        && request.resource.data.price == get(/databases/$(database)/documents/vs_config/prices).data[request.resource.data.model];
+      allow update: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['price', 'status', 'ownerUid', 'model', 'design', 'front', 'back']));
+      allow delete: if isAdmin();
+
+      match /members/{uid} {
+        allow read: if true;
+        allow delete: if isAdmin() || (signedIn() && request.auth.uid == uid
+          && get(/databases/$(database)/documents/orders/$(oid)).data.status == 'aberto');
+        allow create, update: if isAdmin() || (signedIn() && request.auth.uid == uid
+          && get(/databases/$(database)/documents/orders/$(oid)).data.status == 'aberto'
+          && request.resource.data.name is string && request.resource.data.name.size() <= 50
+          && request.resource.data.size in ['PP', 'P', 'M', 'G', 'GG', 'XG']
+          && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty <= 5);
+      }
+      match /confirm/{uid} { allow read: if true; allow write: if isAdmin(); }
+    }
+  }
+}
